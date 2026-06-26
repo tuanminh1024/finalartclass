@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.env
+selected_watermark.png
+.streamlit/secrets.toml
