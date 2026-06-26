@@ -1,76 +1,133 @@
-import os
-import hmac
+import io
+import zipfile
 import streamlit as st
 
+from auth import get_gspread_client
+from auth_app import require_login, logout_button
+from sheet_utils import (
+    load_all_sheets_data,
+    apply_filters,
+    get_teacher_options,
+    get_date_options,
+    update_student_list,
+    get_mapping_for_row,
+    row_to_report_data,
+    safe_filename,
+)
+from pdf_generator import create_report_pdf_bytes, set_watermark_bytes, clear_watermark
 
-def get_allowed_users():
-    """
-    Đọc danh sách user từ biến môi trường:
-    APP_USERS=user1:pass1,user2:pass2
-    """
-    raw = os.environ.get("APP_USERS", "").strip()
-    users = {}
+st.set_page_config(
+    page_title="Phiếu Hoàn Thành Bài Học Mỹ Thuật",
+    page_icon="🎨",
+    layout="wide"
+)
 
-    if not raw:
-        return users
+require_login()
 
-    pairs = [x.strip() for x in raw.split(",") if x.strip()]
-    for pair in pairs:
-        if ":" in pair:
-            username, password = pair.split(":", 1)
-            users[username.strip()] = password.strip()
+st.title("🎨 Hệ thống tạo Phiếu Hoàn Thành Bài Học Mỹ Thuật")
+st.caption("Bản deploy bằng Streamlit + Render")
 
-    return users
+@st.cache_resource
+def init_gspread():
+    return get_gspread_client()
 
+@st.cache_data(ttl=300)
+def load_workbook(sheet_url):
+    gc = init_gspread()
+    spreadsheet = gc.open_by_url(sheet_url)
+    return load_all_sheets_data(spreadsheet)
 
-def check_login(username: str, password: str) -> bool:
-    users = get_allowed_users()
-    if username not in users:
-        return False
-    return hmac.compare_digest(users[username], password)
+def build_zip(df, sheet_mappings, group_by_sheet=False):
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for _, row in df.iterrows():
+            mapping = get_mapping_for_row(row, sheet_mappings)
+            if not mapping:
+                continue
+            report_data = row_to_report_data(row, mapping)
+            if not report_data.get("ten_hoc_vien"):
+                continue
+            filename = f"{safe_filename(report_data['ten_hoc_vien'])}_{safe_filename(report_data['ten_bai_hoc'])}.pdf"
+            pdf_bytes = create_report_pdf_bytes(report_data)
+            if group_by_sheet:
+                sheet_name = safe_filename(str(row.get("_sheet_name", "UnknownSheet")))
+                zipf.writestr(f"{sheet_name}/{filename}", pdf_bytes)
+            else:
+                zipf.writestr(filename, pdf_bytes)
+    return zip_buffer.getvalue()
 
+# =========================
+# SIDEBAR
+# =========================
+st.sidebar.header("Cấu hình")
+st.sidebar.success(f"Đăng nhập: {st.session_state.get('username', '')}")
+logout_button()
 
-def init_auth_state():
-    if "authenticated" not in st.session_state:
-        st.session_state["authenticated"] = False
-    if "username" not in st.session_state:
-        st.session_state["username"] = ""
+sheet_url = st.sidebar.text_input("Google Sheet URL")
+uploaded_watermark = st.sidebar.file_uploader("Watermark PNG", type=["png"])
 
-
-def login_form():
-    st.title("🔐 Đăng nhập hệ thống")
-    st.caption("Vui lòng nhập tài khoản và mật khẩu để sử dụng ứng dụng")
-
-    with st.form("login_form"):
-        username = st.text_input("Tài khoản")
-        password = st.text_input("Mật khẩu", type="password")
-        submitted = st.form_submit_button("Đăng nhập", use_container_width=True)
-
-    if submitted:
-        if check_login(username.strip(), password):
-            st.session_state["authenticated"] = True
-            st.session_state["username"] = username.strip()
-            st.success("Đăng nhập thành công")
-            st.rerun()
+c1, c2 = st.sidebar.columns(2)
+with c1:
+    if st.button("Nạp watermark", use_container_width=True):
+        if uploaded_watermark:
+            set_watermark_bytes(uploaded_watermark.read())
+            st.success("Đã nạp watermark")
         else:
-            st.error("Sai tài khoản hoặc mật khẩu")
+            st.warning("Vui lòng chọn file PNG trước")
 
+with c2:
+    if st.button("Xóa watermark", use_container_width=True):
+        clear_watermark()
+        st.info("Đã xóa watermark")
 
-def require_login():
-    init_auth_state()
+if st.sidebar.button("Tải dữ liệu", type="primary", use_container_width=True):
+    if not sheet_url.strip():
+        st.error("Vui lòng nhập Google Sheet URL")
+    else:
+        try:
+            with st.spinner("Đang tải workbook..."):
+                df, mappings = load_workbook(sheet_url.strip())
+            st.session_state["selected_df"] = df
+            st.session_state["sheet_mappings"] = mappings
+            st.success(f"Đã tải {len(df)} phiếu")
+        except Exception as e:
+            st.error(f"Lỗi tải dữ liệu: {e}")
 
-    if not st.session_state["authenticated"]:
-        users = get_allowed_users()
-        if not users:
-            st.error("Chưa cấu hình APP_USERS trong biến môi trường.")
-            st.stop()
+# =========================
+# STOP IF NO DATA
+# =========================
+if "selected_df" not in st.session_state or st.session_state["selected_df"] is None:
+    st.info("Nhập Google Sheet URL để bắt đầu.")
+    st.stop()
 
-        login_form()
-        st.stop()
+selected_df = st.session_state["selected_df"]
+sheet_mappings = st.session_state["sheet_mappings"]
 
+teacher_options = get_teacher_options(selected_df)
+date_options = get_date_options(selected_df)
 
-def logout_button():
-    if st.sidebar.button("Đăng xuất", use_container_width=True):
-        st.session_state["authenticated"] = False
-        st.session_state["username"] = ""
-        st.rerun()
+f1, f2, f3 = st.columns([2, 1, 1])
+
+with f1:
+    teachers = st.multiselect("Giáo viên", teacher_options, default=["Tất cả"])
+with f2:
+    date_val = st.selectbox("Ngày tháng", date_options)
+with f3:
+    preview_n = st.selectbox("Preview", [10, 20, 50], index=0)
+
+filtered_df = apply_filters(selected_df, teachers=teachers, date_val=date_val)
+
+st.info(f"Tìm thấy {len(filtered_df)} phiếu phù hợp")
+
+st.subheader("Preview dữ liệu")
+st.dataframe(filtered_df.head(preview_n), use_container_width=True)
+
+student_options = update_student_list(filtered_df)
+student_name = st.selectbox("Tên học viên", student_options)
+
+a1, a2, a3 = st.columns(3)
+
+with a1:
+    if st.button("Tạo PDF 1 học viên", use_container_width=True):
+        if student_name == "Tất cả":
+            st.warning("Vui lòng chọn học viên")
