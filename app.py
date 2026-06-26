@@ -3,6 +3,7 @@ import zipfile
 import streamlit as st
 
 from auth import get_gspread_client
+from auth_app import require_login, logout_button
 from sheet_utils import (
     load_all_sheets_data,
     apply_filters,
@@ -15,7 +16,16 @@ from sheet_utils import (
 )
 from pdf_generator import create_report_pdf_bytes, set_watermark_bytes, clear_watermark
 
-st.set_page_config(page_title="Phiếu Hoàn Thành Bài Học Mỹ Thuật", page_icon="🎨", layout="wide")
+st.set_page_config(
+    page_title="Phiếu Hoàn Thành Bài Học Mỹ Thuật",
+    page_icon="🎨",
+    layout="wide"
+)
+
+# =========================
+# LOGIN REQUIRED
+# =========================
+require_login()
 
 st.title("🎨 Hệ thống tạo Phiếu Hoàn Thành Bài Học Mỹ Thuật")
 st.caption("Bản deploy bằng Streamlit + Render")
@@ -49,7 +59,13 @@ def build_zip(df, sheet_mappings, group_by_sheet=False):
                 zipf.writestr(filename, pdf_bytes)
     return zip_buffer.getvalue()
 
+# =========================
+# SIDEBAR
+# =========================
 st.sidebar.header("Cấu hình")
+st.sidebar.success(f"Đăng nhập: {st.session_state.get('username', '')}")
+logout_button()
+
 sheet_url = st.sidebar.text_input("Google Sheet URL")
 uploaded_watermark = st.sidebar.file_uploader("Watermark PNG", type=["png"])
 
@@ -59,6 +75,9 @@ with c1:
         if uploaded_watermark:
             set_watermark_bytes(uploaded_watermark.read())
             st.success("Đã nạp watermark")
+        else:
+            st.warning("Vui lòng chọn file PNG trước")
+
 with c2:
     if st.button("Xóa watermark", use_container_width=True):
         clear_watermark()
@@ -113,7 +132,9 @@ with a1:
         if student_name == "Tất cả":
             st.warning("Vui lòng chọn học viên")
         else:
-            student_rows = filtered_df[filtered_df["_student_str"].astype(str).str.strip() == str(student_name).strip()]
+            student_rows = filtered_df[
+                filtered_df["_student_str"].astype(str).str.strip() == str(student_name).strip()
+            ]
             if student_rows.empty:
                 st.error("Không tìm thấy dữ liệu học viên")
             else:
@@ -122,7 +143,13 @@ with a1:
                 report_data = row_to_report_data(row, mapping)
                 pdf_bytes = create_report_pdf_bytes(report_data)
                 filename = f"{safe_filename(report_data['ten_hoc_vien'])}_{safe_filename(report_data['ten_bai_hoc'])}.pdf"
-                st.download_button("⬇️ Tải PDF", pdf_bytes, filename, "application/pdf", use_container_width=True)
+                st.download_button(
+                    "⬇️ Tải PDF",
+                    pdf_bytes,
+                    filename,
+                    "application/pdf",
+                    use_container_width=True
+                )
 
 with a2:
     if st.button("ZIP theo bộ lọc", use_container_width=True):
@@ -130,9 +157,21 @@ with a2:
             st.warning("Không có dữ liệu để xuất")
         else:
             zip_bytes = build_zip(filtered_df, sheet_mappings, group_by_sheet=False)
-            st.download_button("⬇️ Tải ZIP theo bộ lọc", zip_bytes, "BaoCao_TheoBoLoc.zip", "application/zip", use_container_width=True)
+            st.download_button(
+                "⬇️ Tải ZIP theo bộ lọc",
+                zip_bytes,
+                "BaoCao_TheoBoLoc.zip",
+                "application/zip",
+                use_container_width=True
+            )
 
 with a3:
     if st.button("ZIP toàn bộ workbook", use_container_width=True):
         zip_bytes = build_zip(selected_df, sheet_mappings, group_by_sheet=True)
-        st.download_button("⬇️ Tải ZIP toàn bộ", zip_bytes, "ToanBo_Workbook.zip", "application/zip", use_container_width=True)
+        st.download_button(
+            "⬇️ Tải ZIP toàn bộ",
+            zip_bytes,
+            "ToanBo_Workbook.zip",
+            "application/zip",
+            use_container_width=True
+        )
