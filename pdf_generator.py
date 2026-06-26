@@ -30,8 +30,18 @@ def ensure_fonts_registered():
     global FONTS_REGISTERED
     if FONTS_REGISTERED:
         return
-    if not os.path.exists(REGULAR_FONT_PATH) or not os.path.exists(BOLD_FONT_PATH):
-        raise FileNotFoundError("Thiếu font trong thư mục assets/")
+
+    missing_files = []
+    if not os.path.exists(REGULAR_FONT_PATH):
+        missing_files.append(REGULAR_FONT_PATH)
+    if not os.path.exists(BOLD_FONT_PATH):
+        missing_files.append(BOLD_FONT_PATH)
+
+    if missing_files:
+        raise FileNotFoundError(
+            "Thiếu file font: " + ", ".join(missing_files)
+        )
+
     pdfmetrics.registerFont(TTFont("NotoSans", REGULAR_FONT_PATH))
     pdfmetrics.registerFont(TTFont("NotoSans-Bold", BOLD_FONT_PATH))
     FONTS_REGISTERED = True
