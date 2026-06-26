@@ -27,8 +27,7 @@ st.set_page_config(
 # =========================
 require_login()
 
-st.title("🎨 Hệ thống tạo Phiếu Hoàn Thành Bài Học Mỹ Thuật")
-st.caption("Bản deploy bằng Streamlit + Render")
+st.title("🎨 HỆ THỐNG TẠO PHIẾU HOÀN THÀNH MỸ THUẬT")
 
 @st.cache_resource
 def init_gspread():
