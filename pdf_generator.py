@@ -11,7 +11,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Table, TableStyle, Paragraph
 from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib.enums import TA_LEFT, TA_CENTER
+from reportlab.lib.enums import TA_LEFT
 from pypdf import PdfReader, PdfWriter
 
 from config import REGULAR_FONT_PATH, BOLD_FONT_PATH, WATERMARK_RUNTIME_PATH
@@ -138,29 +138,17 @@ def split_bullet_lines(text):
     return parts
 
 
-def make_paragraph_style(name, font_name="NotoSans", font_size=10, leading=13, bold=False, alignment=TA_LEFT):
+def make_paragraph_style(name, font_name="NotoSans", font_size=10, leading=13, bold=False, alignment=TA_LEFT, text_color=BLACK_COLOR):
     return ParagraphStyle(
         name=name,
         fontName="NotoSans-Bold" if bold else font_name,
         fontSize=font_size,
         leading=leading,
-        textColor=BLACK_COLOR,
+        textColor=text_color,
         alignment=alignment,
         spaceAfter=0,
         spaceBefore=0,
     )
-
-
-def draw_checkbox_line(c, x, y, label, checked):
-    size = 4 * mm
-    c.setStrokeColor(BLACK_COLOR)
-    c.setFillColor(BLACK_COLOR)
-    c.rect(x, y - size + 1, size, size, stroke=1, fill=0)
-    if checked:
-        c.line(x + 1, y - 1, x + 2.5, y - 3)
-        c.line(x + 2.5, y - 3, x + 6, y + 1)
-    c.setFont("NotoSans", 9)
-    c.drawString(x + 7, y - 2, label)
 
 
 def draw_header(c):
@@ -176,9 +164,83 @@ def draw_paragraph(c, html_text, x, y_top, width, style):
     return y_top - h
 
 
+def draw_dotted_underline_text(
+    c,
+    x,
+    y,
+    label,
+    value,
+    label_font="NotoSans-Bold",
+    value_font="NotoSans-Bold",
+    label_size=10,
+    value_size=10,
+    underline_color=RED_COLOR,
+    text_color=RED_COLOR
+):
+    c.setFillColor(BLACK_COLOR)
+    c.setFont(label_font, label_size)
+    c.drawString(x, y, label)
+
+    label_width = pdfmetrics.stringWidth(label, label_font, label_size)
+    value_x = x + label_width + 2
+
+    value = str(value)
+    c.setFillColor(text_color)
+    c.setFont(value_font, value_size)
+    c.drawString(value_x, y, value)
+
+    value_width = pdfmetrics.stringWidth(value, value_font, value_size)
+
+    c.saveState()
+    c.setStrokeColor(underline_color)
+    c.setDash(1, 2)
+    c.setLineWidth(0.8)
+    c.line(value_x, y - 2, value_x + value_width, y - 2)
+    c.restoreState()
+
+    c.setFillColor(BLACK_COLOR)
+    c.setStrokeColor(BLACK_COLOR)
+
+
+def draw_checkbox_line(c, x, y, label, checked):
+    """
+    Ve checkbox gon, tick do nam giua o, label do neu duoc tick
+    y la baseline text
+    """
+    size = 4 * mm
+
+    c.saveState()
+    c.setStrokeColor(BLACK_COLOR)
+    c.setLineWidth(0.8)
+    c.rect(x, y - size + 1.2, size, size, stroke=1, fill=0)
+
+    if checked:
+        c.setStrokeColor(RED_COLOR)
+        c.setLineWidth(1.2)
+
+        x1 = x + 0.9 * mm
+        y1 = y - 2.3 * mm
+        x2 = x + 1.8 * mm
+        y2 = y - 3.4 * mm
+        x3 = x + 3.3 * mm
+        y3 = y - 0.8 * mm
+
+        c.line(x1, y1, x2, y2)
+        c.line(x2, y2, x3, y3)
+
+    c.restoreState()
+
+    c.setFont("NotoSans", 9)
+    c.setFillColor(RED_COLOR if checked else BLACK_COLOR)
+    c.drawString(x + size + 2, y - 2, label)
+
+    c.setFillColor(BLACK_COLOR)
+    c.setStrokeColor(BLACK_COLOR)
+
+
 def draw_teacher_message_table(c, left_text, right_text, y_top):
-    header_style = make_paragraph_style("tbl_header", font_size=10, leading=12, bold=True)
-    body_style = make_paragraph_style("tbl_body", font_size=10, leading=14, bold=True)
+    header_style = make_paragraph_style("tbl_header", font_size=10, leading=12, bold=True, text_color=BLACK_COLOR)
+    body_style = make_paragraph_style("tbl_body", font_size=10, leading=14, bold=True, text_color=BLACK_COLOR)
 
     left_lines = split_bullet_lines(left_text)
     right_lines = split_bullet_lines(right_text)
@@ -218,9 +280,9 @@ def create_report_pdf_bytes(data: dict) -> bytes:
     packet = io.BytesIO()
     c = canvas.Canvas(packet, pagesize=A4)
 
-    title_style = make_paragraph_style("title_style", font_size=12, leading=15, bold=True)
-    bullet_style = make_paragraph_style("bullet_style", font_size=10, leading=14, bold=True)
-    section_style = make_paragraph_style("section_style", font_size=11, leading=14, bold=True)
+    title_style = make_paragraph_style("title_style", font_size=12, leading=15, bold=True, text_color=BLACK_COLOR)
+    bullet_style = make_paragraph_style("bullet_style", font_size=10, leading=14, bold=True, text_color=BLACK_COLOR)
+    section_style = make_paragraph_style("section_style", font_size=11, leading=14, bold=True, text_color=BLACK_COLOR)
 
     # ================= PAGE 1 =================
     draw_page_background_and_watermark(c)
@@ -228,19 +290,48 @@ def create_report_pdf_bytes(data: dict) -> bytes:
 
     y = PAGE_HEIGHT - 32 * mm
 
-    line1 = (
-        f"Học viên: <b>{data.get('ten_hoc_vien', '')}</b> / "
-        f"Tên bài học: <b>{data.get('ten_bai_hoc', '')}</b>"
+    # Dong hoc vien + ten bai hoc
+    draw_dotted_underline_text(
+        c, LEFT_MARGIN, y,
+        "Học viên: ",
+        data.get("ten_hoc_vien", ""),
+        label_font="NotoSans-Bold",
+        value_font="NotoSans-Bold",
+        label_size=12,
+        value_size=12
     )
-    y = draw_paragraph(c, line1, LEFT_MARGIN, y, CONTENT_WIDTH, title_style)
-    y -= 8 * mm
 
-    line2 = (
-        f"Số buổi thực hiện: <b>{data.get('so_buoi_thuc_hien', '')}</b> "
-        f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; "
-        f"Ngày hoàn thành: <b>{data.get('ngay_hoan_thanh', '')}</b>"
+    draw_dotted_underline_text(
+        c, LEFT_MARGIN + 82 * mm, y,
+        " / Tên bài học: ",
+        data.get("ten_bai_hoc", ""),
+        label_font="NotoSans-Bold",
+        value_font="NotoSans-Bold",
+        label_size=12,
+        value_size=12
     )
-    y = draw_paragraph(c, line2, LEFT_MARGIN, y, CONTENT_WIDTH, title_style)
+    y -= 12 * mm
+
+    # Dong so buoi + ngay hoan thanh
+    draw_dotted_underline_text(
+        c, LEFT_MARGIN, y,
+        "Số buổi thực hiện: ",
+        data.get("so_buoi_thuc_hien", ""),
+        label_font="NotoSans-Bold",
+        value_font="NotoSans-Bold",
+        label_size=12,
+        value_size=12
+    )
+
+    draw_dotted_underline_text(
+        c, LEFT_MARGIN + 62 * mm, y,
+        "Ngày hoàn thành: ",
+        data.get("ngay_hoan_thanh", ""),
+        label_font="NotoSans-Bold",
+        value_font="NotoSans-Bold",
+        label_size=12,
+        value_size=12
+    )
     y -= 10 * mm
 
     y = draw_paragraph(c, "1. MỤC TIÊU BÀI HỌC:", LEFT_MARGIN, y, CONTENT_WIDTH, section_style)
@@ -266,6 +357,7 @@ def create_report_pdf_bytes(data: dict) -> bytes:
         c.setFont("NotoSans-Bold", 10)
         c.drawString(LEFT_MARGIN, y, f"- {title}:")
         y -= 6 * mm
+
         x = LEFT_MARGIN + 5 * mm
         for opt in options:
             draw_checkbox_line(c, x, y, opt, option_checked(selected, opt))
@@ -285,6 +377,7 @@ def create_report_pdf_bytes(data: dict) -> bytes:
         c.setFont("NotoSans-Bold", 10)
         c.drawString(LEFT_MARGIN, y, f"- {title}:")
         y -= 6 * mm
+
         x = LEFT_MARGIN + 5 * mm
         for opt in options:
             draw_checkbox_line(c, x, y, opt, option_checked(selected, opt))
