@@ -9,6 +9,9 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase import pdfmetrics
 from reportlab.lib.utils import ImageReader
+from reportlab.platypus import Table, TableStyle, Paragraph
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.enums import TA_LEFT, TA_CENTER
 from pypdf import PdfReader, PdfWriter
 
 from config import REGULAR_FONT_PATH, BOLD_FONT_PATH, WATERMARK_RUNTIME_PATH
@@ -17,6 +20,10 @@ RED_COLOR = colors.HexColor("#C00000")
 BLACK_COLOR = colors.black
 PAGE_WIDTH, PAGE_HEIGHT = A4
 RIGHT_MARGIN = 10 * mm
+LEFT_MARGIN = 15 * mm
+TOP_MARGIN = 20 * mm
+BOTTOM_MARGIN = 15 * mm
+CONTENT_WIDTH = PAGE_WIDTH - LEFT_MARGIN - RIGHT_MARGIN
 FONTS_REGISTERED = False
 
 FOUNDATION_OPTIONS = ["Làm quen", "Tiếp thu", "Thấu hiểu", "Vận dụng", "Làm chủ"]
@@ -39,9 +46,7 @@ def ensure_fonts_registered():
         missing_files.append(BOLD_FONT_PATH)
 
     if missing_files:
-        raise FileNotFoundError(
-            "Thiếu file font: " + ", ".join(missing_files)
-        )
+        raise FileNotFoundError("Thiếu file font: " + ", ".join(missing_files))
 
     pdfmetrics.registerFont(TTFont("NotoSans", REGULAR_FONT_PATH))
     pdfmetrics.registerFont(TTFont("NotoSans-Bold", BOLD_FONT_PATH))
@@ -61,7 +66,6 @@ def clear_watermark():
 def draw_page_background_and_watermark(c):
     c.saveState()
     c.setFillColor(colors.white)
-    c.setStrokeColor(colors.white)
     c.rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT, fill=1, stroke=0)
 
     if os.path.exists(WATERMARK_RUNTIME_PATH):
@@ -109,13 +113,9 @@ def add_page_numbers(packet: io.BytesIO) -> bytes:
     for i, page in enumerate(reader.pages):
         overlay_buffer = io.BytesIO()
         can = canvas.Canvas(overlay_buffer, pagesize=A4)
-
         can.setFillColor(BLACK_COLOR)
-        can.setStrokeColor(BLACK_COLOR)
         can.setFont("NotoSans", 9)
-
-        text = f"Trang {i+1} / {total_pages}"
-        can.drawRightString(PAGE_WIDTH - RIGHT_MARGIN, 7.5 * mm, text)
+        can.drawRightString(PAGE_WIDTH - RIGHT_MARGIN, 7.5 * mm, f"Trang {i+1} / {total_pages}")
         can.save()
 
         overlay_buffer.seek(0)
@@ -129,6 +129,28 @@ def add_page_numbers(packet: io.BytesIO) -> bytes:
     return output.getvalue()
 
 
+def split_bullet_lines(text):
+    parts = []
+    for line in str(text).split("."):
+        line = line.strip()
+        if line:
+            parts.append(line)
+    return parts
+
+
+def make_paragraph_style(name, font_name="NotoSans", font_size=10, leading=13, bold=False, alignment=TA_LEFT):
+    return ParagraphStyle(
+        name=name,
+        fontName="NotoSans-Bold" if bold else font_name,
+        fontSize=font_size,
+        leading=leading,
+        textColor=BLACK_COLOR,
+        alignment=alignment,
+        spaceAfter=0,
+        spaceBefore=0,
+    )
+
+
 def draw_checkbox_line(c, x, y, label, checked):
     size = 4 * mm
     c.setStrokeColor(BLACK_COLOR)
@@ -137,7 +159,57 @@ def draw_checkbox_line(c, x, y, label, checked):
     if checked:
         c.line(x + 1, y - 1, x + 2.5, y - 3)
         c.line(x + 2.5, y - 3, x + 6, y + 1)
+    c.setFont("NotoSans", 9)
     c.drawString(x + 7, y - 2, label)
+
+
+def draw_header(c):
+    c.setFillColor(BLACK_COLOR)
+    c.setFont("NotoSans-Bold", 18)
+    c.drawCentredString(PAGE_WIDTH / 2, PAGE_HEIGHT - TOP_MARGIN, "PHIẾU HOÀN THÀNH BÀI HỌC MỸ THUẬT")
+
+
+def draw_paragraph(c, html_text, x, y_top, width, style):
+    para = Paragraph(html_text, style)
+    w, h = para.wrap(width, PAGE_HEIGHT)
+    para.drawOn(c, x, y_top - h)
+    return y_top - h
+
+
+def draw_teacher_message_table(c, left_text, right_text, y_top):
+    header_style = make_paragraph_style("tbl_header", font_size=10, leading=12, bold=True)
+    body_style = make_paragraph_style("tbl_body", font_size=10, leading=14, bold=True)
+
+    left_lines = split_bullet_lines(left_text)
+    right_lines = split_bullet_lines(right_text)
+
+    left_html = "<br/>".join([f"- {line}" for line in left_lines]) if left_lines else ""
+    right_html = "<br/>".join([f"- {line}" for line in right_lines]) if right_lines else ""
+
+    data = [
+        [
+            Paragraph("1. Ưu điểm nổi bật trong bài này:", header_style),
+            Paragraph("2. Điểm con cần lưu ý/rèn luyện thêm:", header_style),
+        ],
+        [
+            Paragraph(left_html, body_style),
+            Paragraph(right_html, body_style),
+        ],
+    ]
+
+    table = Table(data, colWidths=[85 * mm, 85 * mm])
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.8, colors.black),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+
+    w, h = table.wrapOn(c, CONTENT_WIDTH, 120 * mm)
+    table.drawOn(c, LEFT_MARGIN, y_top - h)
+    return y_top - h
 
 
 def create_report_pdf_bytes(data: dict) -> bytes:
@@ -146,63 +218,41 @@ def create_report_pdf_bytes(data: dict) -> bytes:
     packet = io.BytesIO()
     c = canvas.Canvas(packet, pagesize=A4)
 
+    title_style = make_paragraph_style("title_style", font_size=12, leading=15, bold=True)
+    bullet_style = make_paragraph_style("bullet_style", font_size=10, leading=14, bold=True)
+    section_style = make_paragraph_style("section_style", font_size=11, leading=14, bold=True)
+
+    # ================= PAGE 1 =================
     draw_page_background_and_watermark(c)
+    draw_header(c)
 
-    width, height = A4
-    left = 15 * mm
-    y = height - 20 * mm
+    y = PAGE_HEIGHT - 32 * mm
 
-    # Title
-    c.setFillColor(BLACK_COLOR)
-    c.setStrokeColor(BLACK_COLOR)
-    c.setFont("NotoSans-Bold", 18)
-    c.drawCentredString(width / 2, y, "PHIẾU HOÀN THÀNH BÀI HỌC MỸ THUẬT")
-    y -= 12 * mm
-
-    # Main fields
-    c.setFillColor(BLACK_COLOR)
-    c.setFont("NotoSans", 11)
-    fields = [
-        ("Học viên", data.get("ten_hoc_vien", "")),
-        ("Giáo viên", data.get("ten_giao_vien", "")),
-        ("Tên bài học", data.get("ten_bai_hoc", "")),
-        ("Tác phẩm", data.get("tac_pham", "")),
-        ("Số buổi thực hiện", data.get("so_buoi_thuc_hien", "")),
-        ("Ngày hoàn thành", data.get("ngay_hoan_thanh", "")),
-    ]
-
-    for label, value in fields:
-        c.setFillColor(BLACK_COLOR)
-        c.setFont("NotoSans-Bold", 10)
-        c.drawString(left, y, f"{label}:")
-        c.setFillColor(BLACK_COLOR)
-        c.setFont("NotoSans", 10)
-        c.drawString(left + 45 * mm, y, str(value))
-        y -= 7 * mm
-
-    # Section 1
-    c.setFillColor(BLACK_COLOR)
-    c.setFont("NotoSans-Bold", 11)
-    c.drawString(left, y, "1. MỤC TIÊU BÀI HỌC:")
-    y -= 7 * mm
-
-    c.setFillColor(BLACK_COLOR)
-    c.setFont("NotoSans", 10)
-    text = c.beginText(left, y)
-    text.setFont("NotoSans", 10)
-    text.setFillColor(BLACK_COLOR)
-    for line in str(data.get("muc_tieu_bai_hoc", "")).split("."):
-        line = line.strip()
-        if line:
-            text.textLine(f"- {line}")
-    c.drawText(text)
-    y -= 20 * mm
-
-    # Section 2
-    c.setFillColor(BLACK_COLOR)
-    c.setFont("NotoSans-Bold", 11)
-    c.drawString(left, y, "2. ĐÁNH GIÁ HOÀN THIỆN BÀI:")
+    line1 = (
+        f"Học viên: <b>{data.get('ten_hoc_vien', '')}</b> / "
+        f"Tên bài học: <b>{data.get('ten_bai_hoc', '')}</b>"
+    )
+    y = draw_paragraph(c, line1, LEFT_MARGIN, y, CONTENT_WIDTH, title_style)
     y -= 8 * mm
+
+    line2 = (
+        f"Số buổi thực hiện: <b>{data.get('so_buoi_thuc_hien', '')}</b> "
+        f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; "
+        f"Ngày hoàn thành: <b>{data.get('ngay_hoan_thanh', '')}</b>"
+    )
+    y = draw_paragraph(c, line2, LEFT_MARGIN, y, CONTENT_WIDTH, title_style)
+    y -= 10 * mm
+
+    y = draw_paragraph(c, "1. MỤC TIÊU BÀI HỌC:", LEFT_MARGIN, y, CONTENT_WIDTH, section_style)
+    y -= 5 * mm
+
+    for line in split_bullet_lines(data.get("muc_tieu_bai_hoc", "")):
+        y = draw_paragraph(c, f"- {line}", LEFT_MARGIN + 2 * mm, y, CONTENT_WIDTH - 2 * mm, bullet_style)
+        y -= 1.5 * mm
+
+    y -= 5 * mm
+    y = draw_paragraph(c, "2. ĐÁNH GIÁ HOÀN THIỆN BÀI:", LEFT_MARGIN, y, CONTENT_WIDTH, section_style)
+    y -= 7 * mm
 
     sections = [
         ("Kiến thức nền tảng", FOUNDATION_OPTIONS, data.get("kien_thuc_nen_tang", "")),
@@ -214,22 +264,16 @@ def create_report_pdf_bytes(data: dict) -> bytes:
     for title, options, selected in sections:
         c.setFillColor(BLACK_COLOR)
         c.setFont("NotoSans-Bold", 10)
-        c.drawString(left, y, f"- {title}:")
+        c.drawString(LEFT_MARGIN, y, f"- {title}:")
         y -= 6 * mm
-
-        c.setFillColor(BLACK_COLOR)
-        c.setFont("NotoSans", 9)
-        x = left + 5 * mm
+        x = LEFT_MARGIN + 5 * mm
         for opt in options:
             draw_checkbox_line(c, x, y, opt, option_checked(selected, opt))
             x += 38 * mm
         y -= 8 * mm
 
-    # Section 3
-    c.setFillColor(BLACK_COLOR)
-    c.setFont("NotoSans-Bold", 11)
-    c.drawString(left, y, "3. CHỈ SỐ SÁNG TẠO VÀ THÁI ĐỘ:")
-    y -= 8 * mm
+    y = draw_paragraph(c, "3. CHỈ SỐ SÁNG TẠO VÀ THÁI ĐỘ", LEFT_MARGIN, y, CONTENT_WIDTH, section_style)
+    y -= 7 * mm
 
     sections2 = [
         ("Tư duy giải quyết vấn đề", CREATIVE_OPTIONS, data.get("tu_duy_giai_quyet_van_de", "")),
@@ -239,66 +283,41 @@ def create_report_pdf_bytes(data: dict) -> bytes:
     for title, options, selected in sections2:
         c.setFillColor(BLACK_COLOR)
         c.setFont("NotoSans-Bold", 10)
-        c.drawString(left, y, f"- {title}:")
+        c.drawString(LEFT_MARGIN, y, f"- {title}:")
         y -= 6 * mm
-
-        c.setFillColor(BLACK_COLOR)
-        c.setFont("NotoSans", 9)
-        x = left + 5 * mm
+        x = LEFT_MARGIN + 5 * mm
         for opt in options:
             draw_checkbox_line(c, x, y, opt, option_checked(selected, opt))
             x += 55 * mm
         y -= 8 * mm
 
-    # Section 4
-    c.setFillColor(BLACK_COLOR)
-    c.setFont("NotoSans-Bold", 11)
-    c.drawString(left, y, "4. LỜI NHẮN TỪ GIÁO VIÊN:")
+    c.showPage()
+
+    # ================= PAGE 2 =================
+    draw_page_background_and_watermark(c)
+    draw_header(c)
+
+    y = PAGE_HEIGHT - 32 * mm
+    y = draw_paragraph(c, "4. LỜI NHẮN TỪ GIÁO VIÊN", LEFT_MARGIN, y, CONTENT_WIDTH, section_style)
     y -= 8 * mm
 
-    c.setFillColor(BLACK_COLOR)
-    c.setFont("NotoSans-Bold", 10)
-    c.drawString(left, y, "Ưu điểm nổi bật:")
-    y -= 6 * mm
+    y = draw_teacher_message_table(
+        c,
+        data.get("uu_diem_noi_bat", ""),
+        data.get("can_luu_y_them", ""),
+        y
+    )
 
-    c.setFillColor(BLACK_COLOR)
-    c.setFont("NotoSans", 10)
-    text1 = c.beginText(left + 3 * mm, y)
-    text1.setFont("NotoSans", 10)
-    text1.setFillColor(BLACK_COLOR)
-    for line in str(data.get("uu_diem_noi_bat", "")).split("."):
-        line = line.strip()
-        if line:
-            text1.textLine(f"- {line}")
-    c.drawText(text1)
-    y -= 18 * mm
+    y -= 20 * mm
 
     c.setFillColor(BLACK_COLOR)
     c.setFont("NotoSans-Bold", 10)
-    c.drawString(left, y, "Cần lưu ý thêm:")
-    y -= 6 * mm
-
-    c.setFillColor(BLACK_COLOR)
-    c.setFont("NotoSans", 10)
-    text2 = c.beginText(left + 3 * mm, y)
-    text2.setFont("NotoSans", 10)
-    text2.setFillColor(BLACK_COLOR)
-    for line in str(data.get("can_luu_y_them", "")).split("."):
-        line = line.strip()
-        if line:
-            text2.textLine(f"- {line}")
-    c.drawText(text2)
-
-    # Signature
-    y -= 25 * mm
-    c.setFillColor(BLACK_COLOR)
-    c.setFont("NotoSans-Bold", 10)
-    c.drawRightString(width - 20 * mm, y, "CHỮ KÝ GIÁO VIÊN")
+    c.drawRightString(PAGE_WIDTH - 20 * mm, y, "CHỮ KÝ GIÁO VIÊN")
 
     y -= 8 * mm
     c.setFillColor(RED_COLOR)
     c.setFont("NotoSans-Bold", 12)
-    c.drawRightString(width - 20 * mm, y, str(data.get("ten_giao_vien", "")))
+    c.drawRightString(PAGE_WIDTH - 20 * mm, y, str(data.get("ten_giao_vien", "")))
 
     c.save()
     return add_page_numbers(packet)
